@@ -1,0 +1,24 @@
+apiVersion: orh/v1
+name: fixed-corpus-monolithic-researcher
+
+models:
+  reasoning:
+    provider: ollama
+    name: qwen3:1.7b
+
+components:
+  researcher:
+    type: agent
+    model: reasoning
+    prompt: |
+      You are evaluating a fixed scientific evidence record.
+      The user input is one JSON object with question and evidence fields.
+      Answer the question using only the supplied evidence.
+      Ignore outside knowledge. Return exactly one line in this format:
+      FINAL: <answer>
+
+connections:
+  - from: input
+    to: researcher.input
+  - from: researcher.output
+    to: output

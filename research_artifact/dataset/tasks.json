@@ -1,0 +1,38 @@
+[
+  {
+    "id": "materials-01",
+    "question": "Which material had the highest measured conductivity at 20 C?",
+    "evidence": "Report M-17: At 20 C, Velorium measured 14.2 S/m, Aurix measured 9.8 S/m, and Caldrin measured 11.1 S/m. All samples had equal dimensions.",
+    "answer": "Velorium"
+  },
+  {
+    "id": "catalysis-01",
+    "question": "Which catalyst produced the larger activation-energy reduction?",
+    "evidence": "Catalyst trial C-4 reports that Neris reduced activation energy by 18 percent. Talon reduced it by 7 percent. The control produced no reduction.",
+    "answer": "Neris"
+  },
+  {
+    "id": "ecology-01",
+    "question": "Which habitat had the greatest increase in the Luma moth population?",
+    "evidence": "The Luma census recorded changes from spring to autumn: marsh plus 24 individuals, pine ridge plus 9, and coastal scrub minus 3.",
+    "answer": "marsh"
+  },
+  {
+    "id": "astronomy-01",
+    "question": "Which moon completed an orbit in the shortest time?",
+    "evidence": "The fictional moons Iona, Beru, and Kes had measured orbital periods of 31 hours, 44 hours, and 27 hours respectively.",
+    "answer": "Kes"
+  },
+  {
+    "id": "agriculture-01",
+    "question": "Which treatment yielded the tallest average plant height?",
+    "evidence": "After six weeks, treatment R produced an average height of 18.4 cm, treatment S produced 21.7 cm, and treatment T produced 20.1 cm.",
+    "answer": "treatment S"
+  },
+  {
+    "id": "storage-01",
+    "question": "Which storage condition retained the greatest enzyme activity?",
+    "evidence": "After 30 days, samples stored at 4 C retained 91 percent activity, samples at 12 C retained 76 percent, and samples at 25 C retained 42 percent.",
+    "answer": "4 C"
+  }
+]

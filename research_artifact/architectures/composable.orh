@@ -1,0 +1,43 @@
+apiVersion: orh/v1
+name: fixed-corpus-composable-researcher
+
+models:
+  reasoning:
+    provider: ollama
+    name: qwen3:1.7b
+
+components:
+  evidence_reader:
+    type: agent
+    model: reasoning
+    prompt: |
+      The user input is one JSON object with question and evidence fields.
+      Read both fields and identify the answer supported by the evidence.
+      Preserve the relevant evidence and return:
+      CANDIDATE: <answer>
+      SUPPORT: <the exact supporting fact>
+
+  claim_verifier:
+    type: agent
+    model: reasoning
+    prompt: |
+      Verify whether CANDIDATE follows from SUPPORT. Correct the candidate when
+      necessary. Do not introduce outside facts. Return exactly:
+      VERIFIED: <answer>
+
+  report_writer:
+    type: agent
+    model: reasoning
+    prompt: |
+      Convert the verified result into exactly one line and add no explanation:
+      FINAL: <answer>
+
+connections:
+  - from: input
+    to: evidence_reader.input
+  - from: evidence_reader.output
+    to: claim_verifier.input
+  - from: claim_verifier.output
+    to: report_writer.input
+  - from: report_writer.output
+    to: output
