@@ -20,6 +20,7 @@ type Provider struct {
 	BaseURL string
 	Model   string
 	Client  *http.Client
+	Options map[string]any
 }
 
 // New builds an Ollama provider for the given model name, targeting the
@@ -29,13 +30,15 @@ func New(model string) *Provider {
 		BaseURL: defaultBaseURL,
 		Model:   model,
 		Client:  http.DefaultClient,
+		Options: optionsFromEnv(),
 	}
 }
 
 type generateRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	Stream bool   `json:"stream"`
+	Model   string         `json:"model"`
+	Prompt  string         `json:"prompt"`
+	Stream  bool           `json:"stream"`
+	Options map[string]any `json:"options,omitempty"`
 }
 
 type generateResponse struct {
@@ -46,9 +49,10 @@ type generateResponse struct {
 // Generate implements providers.ModelProvider.
 func (p *Provider) Generate(ctx context.Context, req providers.Request) (providers.Response, error) {
 	body, err := json.Marshal(generateRequest{
-		Model:  p.Model,
-		Prompt: req.Prompt,
-		Stream: false,
+		Model:   p.Model,
+		Prompt:  req.Prompt,
+		Stream:  false,
+		Options: p.Options,
 	})
 	if err != nil {
 		return providers.Response{}, fmt.Errorf("encoding ollama request: %w", err)

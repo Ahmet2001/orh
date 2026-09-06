@@ -12,6 +12,7 @@ import (
 
 	"github.com/pertevniyalai/orh/internal/providers"
 	"github.com/pertevniyalai/orh/internal/providers/ollama"
+	"github.com/pertevniyalai/orh/internal/providers/openai"
 )
 
 // Provider resolves providerName/modelName to a ModelProvider.
@@ -22,6 +23,11 @@ func Provider(providerName, modelName string) (providers.ModelProvider, error) {
 			return nil, fmt.Errorf("ollama provider requires a model name")
 		}
 		return ollama.New(modelName), nil
+	case "openai", "openai-compatible":
+		if modelName == "" {
+			return nil, fmt.Errorf("%s provider requires a model name", providerName)
+		}
+		return openai.New(modelName), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider %q", providerName)
 	}
@@ -35,6 +41,11 @@ func ChatProvider(providerName, modelName string) (providers.ToolCallingProvider
 			return nil, fmt.Errorf("ollama provider requires a model name")
 		}
 		return ollama.New(modelName), nil
+	case "openai", "openai-compatible":
+		if modelName == "" {
+			return nil, fmt.Errorf("%s provider requires a model name", providerName)
+		}
+		return openai.New(modelName), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider %q for tool-calling", providerName)
 	}

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pertevniyalai/orh/internal/cache"
 	"github.com/pertevniyalai/orh/internal/lock"
 	"github.com/pertevniyalai/orh/internal/resolver/github"
 )
@@ -217,6 +218,90 @@ dependencies:
 	}
 	if _, err := os.Stat(filepath.Join(depDir, "orh.yaml")); err != nil {
 		t.Errorf("expected dependency package to be cached: %v", err)
+	}
+}
+
+func TestPull_ConsumesLockWithoutReresolvingMutableDependency(t *testing.T) {
+	t.Setenv("ORH_HOME", t.TempDir())
+
+	depManifest := `
+apiVersion: orh/v1
+kind: skill
+name: critic
+version: 1.0.0
+entrypoint: SKILL.md
+dependencies: []
+`
+	mainManifest := `
+apiVersion: orh/v1
+kind: orchestration
+name: research
+version: 1.0.0
+entrypoint: main.orh
+dependencies:
+  critic:
+    source: github:rifat/critic
+    version: stable
+`
+
+	mainTarball := tarGz(t, "research-main", map[string]string{"orh.yaml": mainManifest, "main.orh": testArch})
+	depTarball := tarGz(t, "critic-stable", map[string]string{"orh.yaml": depManifest, "SKILL.md": "Check every claim."})
+
+	depResolveCalls := 0
+	apiMux := http.NewServeMux()
+	apiMux.HandleFunc("/repos/rifat/research", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"default_branch": "main"})
+	})
+	apiMux.HandleFunc("/repos/rifat/research/commits/main", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"sha": "mainsha1"})
+	})
+	apiMux.HandleFunc("/repos/rifat/critic/commits/stable", func(w http.ResponseWriter, r *http.Request) {
+		depResolveCalls++
+		sha := "criticsha1"
+		if depResolveCalls > 1 {
+			sha = "criticsha2" // simulate a moved tag
+		}
+		json.NewEncoder(w).Encode(map[string]string{"sha": sha})
+	})
+	apiServer := httptest.NewServer(apiMux)
+	defer apiServer.Close()
+
+	codeloadMux := http.NewServeMux()
+	codeloadMux.HandleFunc("/rifat/research/tar.gz/main", func(w http.ResponseWriter, r *http.Request) { w.Write(mainTarball) })
+	codeloadMux.HandleFunc("/rifat/critic/tar.gz/stable", func(w http.ResponseWriter, r *http.Request) { w.Write(depTarball) })
+	codeloadMux.HandleFunc("/rifat/critic/tar.gz/criticsha1", func(w http.ResponseWriter, r *http.Request) { w.Write(depTarball) })
+	codeloadServer := httptest.NewServer(codeloadMux)
+	defer codeloadServer.Close()
+
+	r := New(&github.Client{APIBaseURL: apiServer.URL, CodeloadBaseURL: codeloadServer.URL, HTTPClient: http.DefaultClient})
+	first, err := r.Pull(context.Background(), "rifat/research")
+	if err != nil {
+		t.Fatalf("first Pull() error = %v", err)
+	}
+	if got := first.Package.Manifest.Dependencies["critic"].Version; got != "criticsha1" {
+		t.Fatalf("first pinned version = %q, want criticsha1", got)
+	}
+
+	depDir, err := cache.PackageDir("rifat", "critic", "criticsha1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(depDir); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := r.Pull(context.Background(), "rifat/research")
+	if err != nil {
+		t.Fatalf("second Pull() error = %v", err)
+	}
+	if depResolveCalls != 1 {
+		t.Fatalf("mutable dependency ref was resolved %d times, want once", depResolveCalls)
+	}
+	if got := second.Package.Manifest.Dependencies["critic"].Version; got != "criticsha1" {
+		t.Errorf("second pinned version = %q, want criticsha1", got)
+	}
+	if _, err := os.Stat(filepath.Join(depDir, "SKILL.md")); err != nil {
+		t.Errorf("locked dependency was not restored from its commit: %v", err)
 	}
 }
 

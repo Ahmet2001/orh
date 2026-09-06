@@ -49,10 +49,10 @@ type PullResult struct {
 // entrypoint, and — if it declares dependencies — recursively pulling those
 // too and recording them in the package's own orh.lock.
 func (r *Resolver) Pull(ctx context.Context, refStr string) (*PullResult, error) {
-	return r.pull(ctx, refStr, map[string]bool{})
+	return r.pull(ctx, refStr, "", map[string]bool{})
 }
 
-func (r *Resolver) pull(ctx context.Context, refStr string, seen map[string]bool) (*PullResult, error) {
+func (r *Resolver) pull(ctx context.Context, refStr, pinnedCommit string, seen map[string]bool) (*PullResult, error) {
 	ref, err := github.ParseRef(refStr)
 	if err != nil {
 		return nil, err
@@ -63,10 +63,19 @@ func (r *Resolver) pull(ctx context.Context, refStr string, seen map[string]bool
 		return nil, fmt.Errorf("circular dependency detected on %s", key)
 	}
 	seen[key] = true
+	defer delete(seen, key)
 
-	resolved, err := r.Client.Resolve(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("resolving %s: %w", refStr, err)
+	var resolved github.Resolved
+	if pinnedCommit != "" {
+		// A lock entry already records the immutable commit. Do not resolve
+		// the original branch or tag again: tags can move, and cached locked
+		// packages should remain usable without an API lookup.
+		resolved = github.Resolved{GitRef: pinnedCommit, Commit: pinnedCommit}
+	} else {
+		resolved, err = r.Client.Resolve(ctx, ref)
+		if err != nil {
+			return nil, fmt.Errorf("resolving %s: %w", refStr, err)
+		}
 	}
 
 	dir, err := cache.PackageDir(ref.Owner, ref.Repo, resolved.Commit)
@@ -91,41 +100,96 @@ func (r *Resolver) pull(ctx context.Context, refStr string, seen map[string]bool
 	}
 
 	lockPath := filepath.Join(dir, lock.FileName)
-	_, lockStatErr := os.Stat(lockPath)
-	lockMissing := lockStatErr != nil
-	needsDeps := !cached || (lockMissing && len(p.Manifest.Dependencies) > 0)
+	l, err := lock.Load(lockPath)
+	if err != nil {
+		return nil, err
+	}
+	lockChanged := false
 
-	if needsDeps && len(p.Manifest.Dependencies) > 0 {
-		depLocks := map[string]lock.PackageLock{}
+	if len(p.Manifest.Dependencies) > 0 {
 		for name, dep := range p.Manifest.Dependencies {
 			depRefStr := dep.Source
 			if dep.Version != "" {
 				depRefStr += "@" + dep.Version
 			}
 
-			depResult, err := r.pull(ctx, depRefStr, seen)
-			if err != nil {
-				return nil, fmt.Errorf("dependency %q: %w", name, err)
-			}
-
 			depRef, err := github.ParseRef(dep.Source)
 			if err != nil {
 				return nil, fmt.Errorf("dependency %q: %w", name, err)
 			}
-			depLocks["github:"+depRef.Owner+"/"+depRef.Repo] = lock.PackageLock{
-				Ref:    depResult.Ref,
-				Commit: depResult.Commit,
+			lockKey := "github:" + depRef.Owner + "/" + depRef.Repo
+			locked := l.Packages[lockKey]
+
+			depResult, err := r.pull(ctx, depRefStr, locked.Commit, seen)
+			if err != nil {
+				return nil, fmt.Errorf("dependency %q: %w", name, err)
+			}
+			if locked.Commit != "" && depResult.Commit != locked.Commit {
+				return nil, fmt.Errorf("dependency %q: locked commit %s resolved as %s", name, locked.Commit, depResult.Commit)
+			}
+
+			if locked.Commit == "" {
+				l.Packages[lockKey] = lock.PackageLock{
+					Ref:    depResult.Ref,
+					Commit: depResult.Commit,
+				}
+				lockChanged = true
 			}
 		}
+	}
 
-		l := lock.New()
-		l.Packages = depLocks
+	if lockChanged {
 		if err := l.Save(lockPath); err != nil {
 			return nil, err
 		}
 	}
+	if err := ApplyLock(p, l); err != nil {
+		return nil, err
+	}
 
 	return &PullResult{Dir: dir, Package: p, Ref: resolved.GitRef, Commit: resolved.Commit, Cached: cached}, nil
+}
+
+// ApplyLock rewrites a loaded package's dependency and component versions to
+// the immutable commits recorded in l. This keeps all later consumers
+// (composition, toolboxes, skills, and custom nodes) on the same resolved
+// package graph instead of resolving a mutable tag a second time.
+func ApplyLock(p *pkg.Package, l *lock.Lock) error {
+	for name, dep := range p.Manifest.Dependencies {
+		key, err := lockKey(dep.Source)
+		if err != nil {
+			return fmt.Errorf("dependency %q: %w", name, err)
+		}
+		if pinned, ok := l.Packages[key]; ok && pinned.Commit != "" {
+			dep.Version = pinned.Commit
+			p.Manifest.Dependencies[name] = dep
+		}
+	}
+
+	if p.Entrypoint != nil {
+		for name, component := range p.Entrypoint.Components {
+			if component.Source == "" {
+				continue
+			}
+			key, err := lockKey(component.Source)
+			if err != nil {
+				return fmt.Errorf("component %q: %w", name, err)
+			}
+			if pinned, ok := l.Packages[key]; ok && pinned.Commit != "" {
+				component.Version = pinned.Commit
+				p.Entrypoint.Components[name] = component
+			}
+		}
+	}
+	return nil
+}
+
+func lockKey(source string) (string, error) {
+	ref, err := github.ParseRef(source)
+	if err != nil {
+		return "", err
+	}
+	return "github:" + ref.Owner + "/" + ref.Repo, nil
 }
 
 // downloadInto downloads a package into a temporary directory and, only on

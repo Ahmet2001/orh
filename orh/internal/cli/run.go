@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -16,6 +17,8 @@ import (
 func newRunCmd() *cobra.Command {
 	var modelOverride string
 	var debug bool
+	var sessionID string
+	var recordPath string
 
 	cmd := &cobra.Command{
 		Use:   "run <file.orh | package-dir | owner/repo[@version]>",
@@ -28,10 +31,9 @@ func newRunCmd() *cobra.Command {
 			}
 
 			fmt.Fprint(cmd.OutOrStdout(), "> ")
-			scanner := bufio.NewScanner(os.Stdin)
-			var userInput string
-			if scanner.Scan() {
-				userInput = scanner.Text()
+			userInput, err := readRunInput(cmd.InOrStdin())
+			if err != nil {
+				return fmt.Errorf("reading input: %w", err)
 			}
 
 			var trace scheduler.Trace
@@ -49,6 +51,8 @@ func newRunCmd() *cobra.Command {
 				ModelOverride: modelOverride,
 				Trace:         trace,
 				Dependencies:  entry.Dependencies,
+				SessionID:     sessionID,
+				RecordPath:    recordPath,
 			})
 			if err != nil {
 				return printValidationOrRun(cmd, err)
@@ -63,8 +67,30 @@ func newRunCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&modelOverride, "model", "", "override model as provider:name, e.g. ollama:qwen3")
 	cmd.Flags().BoolVar(&debug, "debug", false, "print a step-by-step execution trace")
+	cmd.Flags().StringVar(&sessionID, "session", "", "persist memory-enabled agents under this session id")
+	cmd.Flags().StringVar(&recordPath, "record", "", "write a machine-readable JSON execution record")
 
 	return cmd
+}
+
+// readRunInput keeps the one-line interactive CLI behavior while preserving
+// all lines when input is piped from an evaluation script or a file.
+func readRunInput(r io.Reader) (string, error) {
+	if file, ok := r.(*os.File); ok {
+		if info, err := file.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			scanner := bufio.NewScanner(file)
+			if scanner.Scan() {
+				return scanner.Text(), nil
+			}
+			return "", scanner.Err()
+		}
+	}
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
 // printValidationOrRun prints per-error lines for a validation error

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/pertevniyalai/orh/internal/components"
+	"github.com/pertevniyalai/orh/internal/memory"
 	"github.com/pertevniyalai/orh/internal/spec"
 	"github.com/pertevniyalai/orh/internal/tools"
 )
@@ -97,7 +98,7 @@ func TestBuildComponents_AppendsSkillInstructionsToPrompt(t *testing.T) {
 	}
 	skillPrompts := map[string]string{"review": "Always check for security issues."}
 
-	comps, err := buildComponents(context.Background(), arch, "", tools.NewRegistry(), skillPrompts)
+	comps, err := buildComponents(context.Background(), arch, "", tools.NewRegistry(), skillPrompts, nil, "", nil)
 	if err != nil {
 		t.Fatalf("buildComponents() error = %v", err)
 	}
@@ -126,7 +127,7 @@ func TestBuildComponents_UndefinedSkillIsAnError(t *testing.T) {
 		},
 	}
 
-	_, err := buildComponents(context.Background(), arch, "", tools.NewRegistry(), map[string]string{})
+	_, err := buildComponents(context.Background(), arch, "", tools.NewRegistry(), map[string]string{}, nil, "", nil)
 	if err == nil {
 		t.Fatal("expected an error for an undefined skill alias, got nil")
 	}
@@ -146,7 +147,7 @@ func TestBuildComponents_InlineSkillNeedsNoPackage(t *testing.T) {
 	}
 
 	// No skillPrompts entries at all — an inline skill must not need one.
-	comps, err := buildComponents(context.Background(), arch, "", tools.NewRegistry(), map[string]string{})
+	comps, err := buildComponents(context.Background(), arch, "", tools.NewRegistry(), map[string]string{}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("buildComponents() error = %v", err)
 	}
@@ -175,7 +176,7 @@ func TestBuildComponents_MixedAliasAndInlineSkills(t *testing.T) {
 	}
 	skillPrompts := map[string]string{"review": "Always check for security issues."}
 
-	comps, err := buildComponents(context.Background(), arch, "", tools.NewRegistry(), skillPrompts)
+	comps, err := buildComponents(context.Background(), arch, "", tools.NewRegistry(), skillPrompts, nil, "", nil)
 	if err != nil {
 		t.Fatalf("buildComponents() error = %v", err)
 	}
@@ -184,5 +185,35 @@ func TestBuildComponents_MixedAliasAndInlineSkills(t *testing.T) {
 	want := "You are helpful.\n\nAlways check for security issues.\n\nAlways answer in one word."
 	if agent.Prompt != want {
 		t.Errorf("agent.Prompt = %q, want %q", agent.Prompt, want)
+	}
+}
+
+func TestBuildComponents_ConfiguresOptInMemory(t *testing.T) {
+	arch := &spec.Architecture{
+		Name:   "research-loop",
+		Models: map[string]spec.Model{"main": {Provider: "ollama", Name: "qwen3"}},
+		Components: map[string]spec.Component{
+			"remembering": {Type: "agent", Model: "main", Prompt: "remember", Memory: true},
+			"stateless":   {Type: "agent", Model: "main", Prompt: "forget"},
+		},
+	}
+	store := memory.NewInMemoryStore()
+
+	comps, err := buildComponents(context.Background(), arch, "", tools.NewRegistry(), nil, store, "experiment-7", nil)
+	if err != nil {
+		t.Fatalf("buildComponents() error = %v", err)
+	}
+
+	remembering := comps["remembering"].(*components.AgentComponent)
+	if remembering.Memory != store {
+		t.Fatal("memory-enabled component did not receive the run's memory store")
+	}
+	if remembering.SessionKey != "experiment-7:research-loop:remembering" {
+		t.Errorf("SessionKey = %q", remembering.SessionKey)
+	}
+
+	stateless := comps["stateless"].(*components.AgentComponent)
+	if stateless.Memory != nil {
+		t.Fatal("stateless component unexpectedly received memory")
 	}
 }

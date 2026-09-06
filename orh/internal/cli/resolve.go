@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/pertevniyalai/orh/internal/lock"
 	"github.com/pertevniyalai/orh/internal/pkg"
 	"github.com/pertevniyalai/orh/internal/resolver"
 	"github.com/pertevniyalai/orh/internal/spec"
@@ -31,6 +32,13 @@ func resolveEntrypoint(ctx context.Context, arg string) (resolvedEntrypoint, err
 			}
 			if result := p.Validate(); !result.Valid() {
 				return resolvedEntrypoint{}, &pkg.ValidationError{Errors: result}
+			}
+			l, err := lock.Load(filepath.Join(arg, lock.FileName))
+			if err != nil {
+				return resolvedEntrypoint{}, err
+			}
+			if err := resolver.ApplyLock(p, l); err != nil {
+				return resolvedEntrypoint{}, err
 			}
 			return resolvedEntrypoint{
 				Path:         filepath.Join(arg, p.Manifest.Entrypoint),

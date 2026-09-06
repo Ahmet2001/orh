@@ -17,6 +17,7 @@ import (
 	"github.com/pertevniyalai/orh/internal/nodes"
 	"github.com/pertevniyalai/orh/internal/parser"
 	"github.com/pertevniyalai/orh/internal/pkg"
+	"github.com/pertevniyalai/orh/internal/provenance"
 	"github.com/pertevniyalai/orh/internal/providers/resolve"
 	"github.com/pertevniyalai/orh/internal/resolver"
 	"github.com/pertevniyalai/orh/internal/runtime/events"
@@ -54,6 +55,9 @@ type Options struct {
 	// is still active within this one run (useful for a component
 	// revisited in a cyclic graph) but never touches disk.
 	SessionID string
+	// RecordPath, if set, receives a machine-readable JSON record of the
+	// resolved architecture, model/dependency bindings, trace, and outputs.
+	RecordPath string
 }
 
 // LoadAndValidate parses, composes (flattens any `type: orchestration`
@@ -105,10 +109,41 @@ func LoadRaw(path string) (*spec.Architecture, error) {
 // Run loads, composes, validates, and executes a .orh file, feeding input
 // in on the graph's "input" boundary and returning whatever reaches
 // "output".
-func Run(ctx context.Context, path string, input string, opts Options) ([]events.Event, error) {
+func Run(ctx context.Context, path string, input string, opts Options) (outputs []events.Event, runErr error) {
+	var record *provenance.Record
+	if opts.RecordPath != "" {
+		record = provenance.New(path, input)
+		defer func() {
+			record.Finish(outputs, runErr)
+			if err := record.Save(opts.RecordPath); err != nil {
+				if runErr != nil {
+					runErr = fmt.Errorf("%w; also failed to save run record: %v", runErr, err)
+				} else {
+					runErr = err
+				}
+			}
+		}()
+	}
+
 	arch, err := LoadAndValidate(ctx, path)
 	if err != nil {
 		return nil, err
+	}
+	if record != nil {
+		if err := record.SetArchitecture(arch, opts.ModelOverride, opts.Dependencies); err != nil {
+			return nil, err
+		}
+	}
+
+	trace := opts.Trace
+	if record != nil {
+		userTrace := trace
+		trace = func(kind, value string) {
+			record.AddStep(kind, value)
+			if userTrace != nil {
+				userTrace(kind, value)
+			}
+		}
 	}
 
 	registry := tools.NewRegistry()
@@ -130,7 +165,20 @@ func Run(ctx context.Context, path string, input string, opts Options) ([]events
 		}
 	}
 
-	comps, err := buildComponents(ctx, arch, opts.ModelOverride, registry, skillPrompts)
+	var memoryStore memory.Store
+	if needsMemory(arch) {
+		if opts.SessionID == "" {
+			memoryStore = memory.NewInMemoryStore()
+		} else {
+			sessionsDir, dirErr := cache.SessionsDir()
+			if dirErr != nil {
+				return nil, dirErr
+			}
+			memoryStore = memory.NewFileStore(sessionsDir)
+		}
+	}
+
+	comps, err := buildComponents(ctx, arch, opts.ModelOverride, registry, skillPrompts, memoryStore, opts.SessionID, trace)
 	if err != nil {
 		return nil, err
 	}
@@ -138,13 +186,13 @@ func Run(ctx context.Context, path string, input string, opts Options) ([]events
 	sched := &scheduler.Scheduler{
 		Graph:      graph.Build(arch),
 		Components: comps,
-		Trace:      opts.Trace,
+		Trace:      trace,
 	}
 
 	return sched.Run(ctx, events.Event{Payload: input})
 }
 
-func buildComponents(ctx context.Context, arch *spec.Architecture, modelOverride string, registry *tools.Registry, skillPrompts map[string]string) (map[string]components.Component, error) {
+func buildComponents(ctx context.Context, arch *spec.Architecture, modelOverride string, registry *tools.Registry, skillPrompts map[string]string, memoryStore memory.Store, sessionID string, trace func(string, string)) (map[string]components.Component, error) {
 	built := make(map[string]components.Component)
 
 	for name, c := range arch.Components {
@@ -186,7 +234,11 @@ func buildComponents(ctx context.Context, arch *spec.Architecture, modelOverride
 			prompt = strings.TrimRight(prompt, "\n") + "\n\n" + text
 		}
 
-		agent := &components.AgentComponent{Name: name, Prompt: prompt}
+		agent := &components.AgentComponent{Name: name, Prompt: prompt, Trace: trace}
+		if c.Memory {
+			agent.Memory = memoryStore
+			agent.SessionKey = memoryKey(sessionID, arch.Name, name)
+		}
 
 		if len(c.Tools) == 0 {
 			provider, err := resolve.Provider(providerName, modelName)
@@ -214,6 +266,22 @@ func buildComponents(ctx context.Context, arch *spec.Architecture, modelOverride
 	}
 
 	return built, nil
+}
+
+func needsMemory(arch *spec.Architecture) bool {
+	for _, component := range arch.Components {
+		if component.Type == "agent" && component.Memory {
+			return true
+		}
+	}
+	return false
+}
+
+func memoryKey(sessionID, architecture, component string) string {
+	if sessionID == "" {
+		return architecture + ":" + component
+	}
+	return sessionID + ":" + architecture + ":" + component
 }
 
 // buildNodeComponent resolves a `type: node` component's source package and

@@ -12,3 +12,17 @@
 .idea/
 .vscode/
 *.swp
+
+# Python caches
+__pycache__/
+*.pyc
+
+# LaTeX build byproducts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz

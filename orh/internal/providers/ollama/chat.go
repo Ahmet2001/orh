@@ -42,6 +42,7 @@ type chatRequest struct {
 	Messages []chatMessage  `json:"messages"`
 	Tools    []chatToolSpec `json:"tools,omitempty"`
 	Stream   bool           `json:"stream"`
+	Options  map[string]any `json:"options,omitempty"`
 }
 
 type chatResponse struct {
@@ -57,6 +58,7 @@ func (p *Provider) Chat(ctx context.Context, req providers.ChatRequest) (provide
 		Messages: toChatMessages(req.Messages),
 		Tools:    toChatTools(req.Tools),
 		Stream:   false,
+		Options:  p.Options,
 	})
 	if err != nil {
 		return providers.ChatResponse{}, fmt.Errorf("encoding ollama chat request: %w", err)

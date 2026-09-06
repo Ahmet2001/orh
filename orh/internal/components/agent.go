@@ -38,6 +38,8 @@ type AgentComponent struct {
 	// SessionKey, so different sessions/components never share history.
 	Memory     memory.Store
 	SessionKey string
+	// Trace observes model and tool calls for debugging and run provenance.
+	Trace func(kind, value string)
 }
 
 // Handle implements Component.
@@ -63,6 +65,7 @@ func (a *AgentComponent) handleSimple(ctx context.Context, event events.Event) (
 		prompt += "\n\nuser: " + text
 	}
 
+	a.trace("ModelCall", a.Name)
 	resp, err := a.Provider.Generate(ctx, providers.Request{Prompt: prompt})
 	if err != nil {
 		return nil, fmt.Errorf("component %q: %w", a.Name, err)
@@ -101,6 +104,7 @@ func (a *AgentComponent) handleWithTools(ctx context.Context, event events.Event
 	}
 
 	for i := 0; i < maxIter; i++ {
+		a.trace("ModelCall", a.Name)
 		resp, err := a.ChatProvider.Chat(ctx, providers.ChatRequest{Messages: messages, Tools: toolSpecs})
 		if err != nil {
 			return nil, fmt.Errorf("component %q: %w", a.Name, err)
@@ -131,6 +135,7 @@ func (a *AgentComponent) handleWithTools(ctx context.Context, event events.Event
 				continue
 			}
 
+			a.trace("ToolCall", a.Name+":"+call.Name)
 			result, err := t.Execute(ctx, call.Arguments)
 			if err != nil {
 				result = fmt.Sprintf("error: %s", err)
@@ -140,6 +145,12 @@ func (a *AgentComponent) handleWithTools(ctx context.Context, event events.Event
 	}
 
 	return nil, fmt.Errorf("component %q: exceeded %d tool-calling iterations without a final answer", a.Name, maxIter)
+}
+
+func (a *AgentComponent) trace(kind, value string) {
+	if a.Trace != nil {
+		a.Trace(kind, value)
+	}
 }
 
 func (a *AgentComponent) output(text string) commands.Command {
