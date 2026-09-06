@@ -1,0 +1,21 @@
+apiVersion: orh/v1
+name: hello-agent
+
+models:
+  main:
+    provider: ollama
+    name: qwen3
+
+components:
+  assistant:
+    type: agent
+    model: main
+    prompt: |
+      Answer the user question.
+
+connections:
+  - from: input
+    to: assistant.input
+
+  - from: assistant.output
+    to: output

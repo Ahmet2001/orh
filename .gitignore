@@ -1,0 +1,14 @@
+# Go build and test outputs
+*.exe
+*.out
+*.test
+/orh/orh
+
+# Local ORH runtime state
+.orh/
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp

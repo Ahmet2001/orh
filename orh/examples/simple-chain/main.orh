@@ -1,0 +1,30 @@
+apiVersion: orh/v1
+name: simple-chain
+
+models:
+  main:
+    provider: ollama
+    name: qwen3
+
+components:
+  researcher:
+    type: agent
+    model: main
+    prompt: |
+      Research the user's topic and list the key facts.
+
+  writer:
+    type: agent
+    model: main
+    prompt: |
+      Turn the research notes into a short, clear answer.
+
+connections:
+  - from: input
+    to: researcher.input
+
+  - from: researcher.output
+    to: writer.input
+
+  - from: writer.output
+    to: output
